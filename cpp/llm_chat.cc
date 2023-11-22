@@ -492,7 +492,8 @@ class LLMChat {
    * \param app_config_json The JSON string used to partially override the configuration loaded from
    * disk, default to empty string.
    */
-  void Reload(TVMArgValue reload_lib, String model_path, String app_config_json = "") {
+  void Reload(TVMArgValue reload_lib, String model_path, String app_config_json = "",
+              bool use_tokenizer = true) {
     // Step 1. Process config json string.
     {
       std::ifstream config_istream((model_path + "/mlc-chat-config.json").c_str());
@@ -507,7 +508,7 @@ class LLMChat {
       }
     }
     // Step 2. Set tokenizer.
-    this->tokenizer_ = TokenizerFromPath(model_path);
+    if (use_tokenizer) this->tokenizer_ = TokenizerFromPath(model_path);
     // Step 3. Initialize vm, we use the packed function mechanism
     // so there is no explicit abi dependency on these extra
     // classes other than basic tvm runtime.
@@ -1246,6 +1247,16 @@ class LLMChat {
     }
   }
 
+  // For exposing to GetFunction
+  ObjectRef ForwardTokensWrapper(NDArray input_tokens, int64_t cur_pos) {
+    // Convert NDArray to std::vector
+    ICHECK_EQ(input_tokens.Shape().size(), 1);
+    int64_t token_len = input_tokens.Shape()[0];
+    std::vector<int32_t> input_tokens_std(token_len);
+    input_tokens.CopyToBytes(input_tokens_std.data(), token_len * sizeof(int32_t));
+    return this->ForwardTokens(input_tokens_std, cur_pos);
+  }
+
   // run forward compute with embeddings
   NDArray ForwardEmbeddings(NDArray embeddings, int64_t cur_pos) {
     if (ft_.use_disco) {
@@ -1448,13 +1459,16 @@ class LLMChatModule : public ModuleNode {
         chat_ = nullptr;
         ClearGlobalMemoryManager();
         chat_ = std::make_unique<LLMChat>(LLMChat(device_));
-        ICHECK(2 <= args.size() && args.size() <= 3);
+        ICHECK(2 <= args.size() && args.size() <= 4);
         if (args.size() == 2) {
           // args: reload_lib, model_path
           chat_->Reload(args[0], args[1]);
         } else if (args.size() == 3) {
           // args: reload_lib, model_path, app_config_json (used for overriding config)
           chat_->Reload(args[0], args[1], args[2]);
+        } else if (args.size() == 4) {
+          // args: reload_lib, model_path, app_config_json (used for overriding config)
+          chat_->Reload(args[0], args[1], args[2], args[3]);
         }
       });
     } else if (name == "unload") {
@@ -1576,6 +1590,12 @@ class LLMChatModule : public ModuleNode {
     } else if (name == "process_system_prompts") {
       return PackedFunc([this, sptr_to_self](TVMArgs args, TVMRetValue* rv) {
         GetChat()->ProcessSystemPrompts();
+      });
+    } else if (name == "forward_tokens") {
+      return PackedFunc([this, sptr_to_self](TVMArgs args, TVMRetValue* rv) {
+        ICHECK_EQ(args.size(), 2);
+        // args: input_tokens, cur_pos
+        *rv = GetChat()->ForwardTokensWrapper(args[0], args[1]);
       });
     } else {
       return PackedFunc(nullptr);

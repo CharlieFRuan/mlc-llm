@@ -10,8 +10,10 @@ from dataclasses import asdict, dataclass, fields
 from enum import Enum
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
+import numpy as np
 import tvm
 from tvm.runtime import disco  # pylint: disable=unused-import
+from tvm.runtime.ndarray import array as as_ndarray
 
 from mlc_chat.support.auto_device import detect_device
 
@@ -654,6 +656,7 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
         device: str = "auto",
         chat_config: Optional[ChatConfig] = None,
         model_lib_path: Optional[str] = None,
+        use_tokenizer: bool = True,
     ):
         # 0. Get device:
         # Retrieve device_name and device_id (if any, default 0) from device arg
@@ -686,6 +689,7 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
         self._evaluate_func = chat_mod["evaluate"]
         self._get_role0_func = chat_mod["get_role0"]
         self._get_role1_func = chat_mod["get_role1"]
+        self._forward_tokens_func = chat_mod["forward_tokens"]
 
         # 2. Look up model_path
         self.model_path, self.config_file_path = _get_model_path(model)
@@ -707,7 +711,7 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
         user_chat_config_json_str = _convert_chat_config_to_json_str(
             self.chat_config, self.chat_config.conv_template
         )
-        self._reload(self.model_lib_path, self.model_path, user_chat_config_json_str)
+        self._reload(self.model_lib_path, self.model_path, user_chat_config_json_str, use_tokenizer)
 
     def generate(
         self,
@@ -907,7 +911,9 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
 
         return self._raw_generate_func(prompt, generate_length)
 
-    def _reload(self, lib: str, model_path: str, app_config_json: str = ""):
+    def _reload(
+        self, lib: str, model_path: str, app_config_json: str = "", use_tokenizer: bool = True
+    ):
         r"""Reload the chat module from the given library and model path.
 
         Parameters
@@ -919,7 +925,7 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
         app_config_json: str
             The partial config that is used to partially override the model configuration.
         """
-        self._reload_func(lib, model_path, app_config_json)
+        self._reload_func(lib, model_path, app_config_json, use_tokenizer)
 
     def _unload(self):
         r"""Unload the chat module and clear memory of all loaded models."""
@@ -1130,3 +1136,41 @@ class ChatModule:  # pylint: disable=too-many-instance-attributes
     def _process_system_prompts(self):
         r"""Pre-process by prefilling the system prompts, running prior to any user input."""
         self._process_system_prompts_func()
+
+    def _forward_tokens(
+        self,
+        input_tokens: np.ndarray,
+        cur_pos: int = None,
+    ) -> np.ndarray:
+        r"""A more fine-grained API. Taking in a list of input tokens, return
+        the logits after the forward pass. Essentially `model.forward(input_tokens)`.
+
+        Parameters
+        ----------
+        input_tokens : numpy.ndarray
+            The user input tokens.
+        cur_pos : int
+            The current position, i.e. the sum of historical number of tokens processed
+            and number of tokens in ``input_tokens``. Default to `len(input_tokens)`.
+
+        Returns
+        -------
+        logits_on_device : numpy.ndarray
+            The logits after forwarding the model, a numpy array.
+        """
+        assert len(input_tokens.shape) == 2, "Expect shape of (batch_size, sequence_length)"
+        batch_size, seq_len = input_tokens.shape
+        assert batch_size == 1, "Only support batch size of 1."
+        input_tokens = input_tokens[0]
+
+        # 1. Convert input_tokens to tvm.runtime.NDArray
+        input_tokens = input_tokens.astype(np.int32)
+        input_tokens = as_ndarray(input_tokens)
+
+        # 2. Forward pass, getting a tvm.runtime.NDArray
+        if cur_pos is None:
+            cur_pos = seq_len
+        logits = self._forward_tokens_func(input_tokens, cur_pos)
+
+        # tvm.runtime.NDArray --> numpy.ndarray
+        return logits.numpy()
