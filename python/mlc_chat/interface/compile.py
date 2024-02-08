@@ -1,4 +1,5 @@
 """Python entrypoint of compilation."""
+
 import dataclasses
 import math
 from io import StringIO
@@ -149,6 +150,10 @@ def _compile(args: CompileArgs, model_config: ConfigBase):
                 "KN layout (q3f16_0 and q4f16_0) is not supported for tensor parallelism"
             )
         model, _ = args.model.quantize[args.quantization.kind](model_config, args.quantization)
+        if args.quantization.name == "q4f16_ft":
+            model_config.vocab_size_div_by_num_elem_per_storage = (
+                model_config.vocab_size // args.quantization.num_elem_per_storage
+            )
         kv_cache_bytes = _find_kv_cache_bytes(model, model_config)
         # Step 2. Exporting the model to TVM Unity
         logger.info("Exporting the model to TVM Unity compiler")

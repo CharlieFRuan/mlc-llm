@@ -1,4 +1,5 @@
 """The FasterTransformer quantization config"""
+
 from dataclasses import dataclass
 from typing import Any, Callable, List, Literal, Optional, Tuple
 
@@ -294,8 +295,12 @@ class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attribut
         self.out_dtype = out_dtype
         self.config = config
         cur_group_size = in_features if not config.group_size else config.group_size
+        quantized_out_features = tir.ceildiv(out_features, config.num_elem_per_storage)
+        if not isinstance(quantized_out_features, tir.IntImm):
+            # For dynamic vocab size, out_features is tir.Var("vocab_size")
+            quantized_out_features = "vocab_size_div_by_num_elem_per_storage"
         self.q_weight = nn.Parameter(
-            (in_features, tir.ceildiv(out_features, config.num_elem_per_storage)),
+            (in_features, quantized_out_features),
             config.storage_dtype,
         )
         self.q_scale = nn.Parameter(
@@ -326,9 +331,11 @@ class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attribut
         ret : FTQuantizeLinear
             The FasterTransformer quantized FTQuantizeLinear layer.
         """
+        # For dynamic shape, src.out_features is `"name"`; src.weight.shape[0] is `tir.Var("name")`
+        out_features, in_features = src.weight.shape
         quantized_linear = FTQuantizeLinear(
-            in_features=src.in_features,
-            out_features=src.out_features,
+            in_features=in_features,
+            out_features=out_features,
             config=config,
             bias=getattr(src, "bias", None) is not None,
             out_dtype=src.out_dtype,

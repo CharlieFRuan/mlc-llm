@@ -1,4 +1,5 @@
 """A tool that inspects the metadata of a model lib."""
+
 import json
 import math
 from dataclasses import asdict
@@ -59,6 +60,9 @@ def _read_dynamic_shape(shape: List[Union[int, str]], config: Union[Dict, Config
                     red(s),
                 )
                 raise AttributeError
+            if s == "vocab_size_div_by_num_elem_per_storage":
+                param_shape.append(16000)
+                continue
             if not s in config:
                 logger.error(
                     "%s to retrieve concrete %s for dynamic shape from %s.",
