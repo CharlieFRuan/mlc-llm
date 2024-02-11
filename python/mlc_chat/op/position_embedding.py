@@ -1,4 +1,5 @@
 """Operators for positional embeddings, e.g. RoPE."""
+
 from typing import Tuple
 
 from tvm import tir
@@ -319,6 +320,13 @@ def llama_inplace_rope(
         )
         return cos + sin
 
+    VEC_SIZE = 4
+    bdx = (head_dim + VEC_SIZE - 1) // VEC_SIZE  # T.ceildiv(head_dim, VEC_SIZE)
+    bdy = 8  # for WebGPU Llama 7B, 13B, 70B
+    # bdy = 16  # for WebGPU tinyllama
+    # bdy = 32  # non-WebGPU
+    print(f"tir_rotary - bdx: {bdx}, bdy: {bdy}")
+
     # fmt: off
     @T.prim_func
     def tir_rotary(  # pylint: disable=too-many-locals
@@ -348,12 +356,12 @@ def llama_inplace_rope(
                 instance_offset: T.int32 = append_len_indptr[b]
                 rope_offset: T.int32 = rope_offsets[b]
                 append_len: T.int32 = append_len_indptr[b + 1] - append_len_indptr[b]
-                for s0 in range(T.ceildiv(append_len, 32)):
-                    for s1 in T.thread_binding(32, thread="threadIdx.y"):
-                        for d0 in T.thread_binding(T.ceildiv(head_dim, 4), thread="threadIdx.x"):
-                            for d1 in T.vectorized(4):
-                                s: T.int32 = s0 * 32 + s1
-                                d: T.int32 = d0 * 4 + d1
+                for s0 in range(T.ceildiv(append_len, bdy)):
+                    for s1 in T.thread_binding(bdy, thread="threadIdx.y"):
+                        for d0 in T.thread_binding(bdx, thread="threadIdx.x"):
+                            for d1 in T.vectorized(VEC_SIZE):
+                                s: T.int32 = s0 * bdy + s1
+                                d: T.int32 = d0 * VEC_SIZE + d1
                                 if s < append_len and d < head_dim:
                                     if h < num_q_heads:
                                         q[s + instance_offset, h, d] = _rope(q, s, h, d, rope_offset, instance_offset)

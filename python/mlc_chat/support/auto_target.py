@@ -1,4 +1,5 @@
 """Helper functions for target auto-detection."""
+
 import os
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
@@ -190,12 +191,18 @@ def _build_webgpu():
         output = args.output
         mod = _add_system_lib_prefix(mod, args.system_lib_prefix, is_system_lib=True)
         assert output.suffix == ".wasm"
-        relax.build(
+        ex = relax.build(
             mod,
             target=args.target,
             pipeline=pipeline,
             system_lib=True,
-        ).export_library(
+        )
+        dump_path = f"./debug/{args.model.name}.wgsl"
+        source = ex.mod.imported_modules[0].imported_modules[0].get_source()
+        with open(dump_path, "w", encoding="utf-8") as outfile:
+            outfile.write(source)
+        print(f"Dump shader to {dump_path}")
+        ex.export_library(
             str(output),
         )
 
@@ -232,12 +239,18 @@ def _build_default():
             logger.warning("Unknown output suffix: %s. Assuming shared library.", output.suffix)
             system_lib = False
         mod = _add_system_lib_prefix(mod, args.system_lib_prefix, is_system_lib=system_lib)
-        relax.build(
+        ex = relax.build(
             mod,
             target=args.target,
             pipeline=pipeline,
             system_lib=system_lib,
-        ).export_library(
+        )
+        dump_path = "./llama_vulkan.so"
+        source = ex.mod.imported_modules[0].imported_modules[0].get_source()
+        with open(dump_path, "w", encoding="utf-8") as outfile:
+            outfile.write(source)
+        print(f"Dump shader to {dump_path}")
+        ex.export_library(
             str(output),
         )
 

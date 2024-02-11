@@ -1,4 +1,5 @@
 """Attention KV cache modeling."""
+
 # pylint: disable=too-many-statements,too-many-lines
 import enum
 import math
@@ -739,6 +740,22 @@ def _attention_decode(num_kv_heads, num_qo_heads, head_dim, qkv_dtype):
     tile_size_per_bdx = 2 if GROUP_SIZE == 1 else 1
     log2e = math.log2(math.exp(1))
 
+    # For WebGPU Llama 2 70B
+    bdx = 32
+    bdy = 8
+    bdz = 1
+
+    # For WebGPU Llama 2 7B and 13B
+    # bdx = 32
+    # bdy = 1
+    # bdz = 8
+
+    # For WebGPU TinyLlama
+    # bdx = 16
+    # bdy = 8
+    # bdz = 2
+    print(f"_attention_decode - bdx: {bdx}, bdy: {bdy}, bdz: {bdz}")
+
     # pylint: disable=line-too-long,too-many-arguments,too-many-branches
     # fmt: off
     @T.prim_func
@@ -949,6 +966,8 @@ def _merge_state_inplace(num_heads, head_dim, v_dtype):
     VEC_SIZE = max(8 // v_dtype_bytes, head_dim // 32)
     bdx = head_dim // VEC_SIZE
     bdy = num_heads
+    # bdy = 8  # For WebGPU Llama 7B 13B; TinyLlama or Llama2 70B does not need a change
+    print(f"_merge_state_inplace - bdx: {bdx}, bdy: {bdy}")
 
     @T.prim_func
     def merge_state_inplace(
