@@ -7,6 +7,7 @@ import os
 import numpy as np
 import torch
 import tvm
+from tvm.runtime import ShapeTuple
 from transformers import AutoTokenizer
 from tvm import relax
 
@@ -38,10 +39,10 @@ class DumpInstrument:  # pylint: disable=too-few-public-methods
         # Determine what functions to look at
         if before_run:  # Whether before the function is called or after
             return
-        # if self.first_nan_occurred:
-        #     return
-        # if self.first_inf_occurred:
-        #     return
+        if self.first_nan_occurred:
+            return
+        if self.first_inf_occurred:
+            return
         if name.startswith("vm.builtin."):
             return
         if any(not isinstance(x, tvm.nd.NDArray) for x in args):
@@ -65,10 +66,11 @@ class DumpInstrument:  # pylint: disable=too-few-public-methods
             self.first_inf_occurred = True
 
         # You can also save the the arguments to experiment offline
-        # if self.counter == 769:
-        #     for i, ndarray in enumerate(args):
-        #         save_name = func_name + f"_arg{i}"
-        #         np.save(f"./debug/{save_name}.npy", ndarray.numpy())
+        if self.counter == 86:
+            for i, ndarray in enumerate(args):
+                save_name = func_name + f"_arg{i}"
+                np.save(f"./debug_nan/{save_name}.npy", ndarray.numpy())
+                print(f"saved: ./debug_nan/{save_name}.npy")
 
         self.counter += 1
 
@@ -123,8 +125,8 @@ def deploy_to_pipeline(args) -> None:
     first_sampled_token = tvm.nd.array(np.array([[6234]]).astype("int32"), primary_device)
     seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1]])
     second_seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1] + 1])
-    kv_caches = state.vm["_initialize_effect"]()
-
+    # kv_caches = state.vm["_initialize_effect"]()
+    kv_caches = state.vm["create_tir_paged_kv_cache"](ShapeTuple([1]), ShapeTuple([2048]), ShapeTuple([2048]), ShapeTuple([16]))
     print("Running inference...")
     print("======================= Starts Encoding =======================")
 
@@ -132,21 +134,31 @@ def deploy_to_pipeline(args) -> None:
         prefill_func = state.vm["prefill"]
     except AttributeError:
         prefill_func = None
+    add_sequence_func = tvm.get_global_func("vm.builtin.paged_attention_kv_cache_add_sequence")
+    begin_forward_func = tvm.get_global_func("vm.builtin.paged_attention_kv_cache_begin_forward")
+    end_forward_func = tvm.get_global_func("vm.builtin.paged_attention_kv_cache_end_forward")
+    add_sequence_func(kv_caches, 0)
 
     if inputs.shape[1] > 1 and prefill_func:
         inputs = tvm.nd.array(inputs, device=primary_device)
-        logits, kv_caches = prefill_func(inputs, seq_len_shape, kv_caches, const_params)
+        begin_forward_func(kv_caches, ShapeTuple([0]), seq_len_shape)
+        logits, kv_caches = prefill_func(inputs, kv_caches, const_params)
+        end_forward_func(kv_caches)
     else:
         for i in range(inputs.shape[1]):
             input_slice = tvm.nd.array(inputs[:, i : i + 1], device=primary_device)
+            begin_forward_func(kv_caches, ShapeTuple([0]), ShapeTuple([1]))
             logits, kv_caches = state.vm["decode"](
-                input_slice, seq_len_shape, kv_caches, const_params
+                input_slice, kv_caches, const_params
             )
+            end_forward_func(kv_caches)
 
     print("======================= Starts Decoding =======================")
+    begin_forward_func(kv_caches, ShapeTuple([0]), ShapeTuple([1]))
     logits, kv_caches = state.vm["decode"](
-        first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        first_sampled_token, kv_caches, const_params
     )
+    end_forward_func(kv_caches)
 
 
 def _parse_args():
@@ -162,6 +174,8 @@ def _parse_args():
             parsed.primary_device = "cuda"
         elif tvm.metal().exist:
             parsed.primary_device = "metal"
+        elif tvm.rocm().exist:
+            parsed.primary_device = "rocm"
         else:
             raise ValueError("Cannot auto deduce device-name, please set it")
     return parsed
