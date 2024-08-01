@@ -22,18 +22,20 @@ INCLUDE_FLAGS = -I$(TVM_ROOT) -I$(TVM_ROOT)/include\
 	-I$(TVM_ROOT)/3rdparty/dlpack/include -I$(TVM_ROOT)/3rdparty/dmlc-core/include\
 	-I$(TVM_ROOT)/3rdparty/compiler-rt -I$(TVM_ROOT)/3rdparty/picojson\
 	-I$(MLC_LLM_ROOT)/3rdparty/tokenizers-cpp\
+	-I$(MLC_LLM_ROOT)/3rdparty/stb\
 	-I$(MLC_LLM_ROOT)/3rdparty/tokenizers-cpp/include -I$(MLC_LLM_ROOT)/cpp
 
 .PHONY: clean all rmtypedep preparetest
 
-all: dist/wasm/mlc_wasm_runtime.wasm
+all: dist/wasm/mlc_wasm_runtime.wasm dist/wasm/mlc_wasm_runtime.wasi.js src/mlc_wasm_runtime_wasi.js
 
 EMCC = emcc
 
 EMCC_CFLAGS = $(INCLUDE_FLAGS) -O3 -std=c++17 -Wno-ignored-attributes
 
 EMCC_LDFLAGS = --no-entry -s WASM_BIGINT=1 -s ALLOW_MEMORY_GROWTH=1 -s STANDALONE_WASM=1\
- -s ERROR_ON_UNDEFINED_SYMBOLS=0
+ -s ASYNCIFY=1\
+ -s ERROR_ON_UNDEFINED_SYMBOLS=0 --pre-js emcc/preload.js
 
 dist/wasm/mlc_wasm_runtime.bc: emcc/mlc_wasm_runtime.cc
 	@mkdir -p $(@D)
@@ -41,11 +43,22 @@ dist/wasm/mlc_wasm_runtime.bc: emcc/mlc_wasm_runtime.cc
 	$(EMCC) $(EMCC_CFLAGS) -emit-llvm -c -o dist/wasm/mlc_wasm_runtime.bc emcc/mlc_wasm_runtime.cc
 
 # Compile to wasm here so that errors can be caught earlier (rather than during export_library)
-dist/wasm/mlc_wasm_runtime.wasm: dist/wasm/mlc_wasm_runtime.bc
+# dist/wasm/mlc_wasm_runtime.wasm: dist/wasm/mlc_wasm_runtime.bc
+# 	@mkdir -p $(@D)
+# 	$(EMCC) $(EMCC_CFLAGS) -o dist/wasm/mlc_wasm_runtime.wasm $+ $(EMCC_LDFLAGS)
+
+# For testing tokenizer compilation
+dist/wasm/mlc_wasm_runtime.wasm: dist/wasm/mlc_wasm_runtime.bc /Users/cfruan/Documents/tvm/web/dist/wasm/tvmjs_support.bc /Users/cfruan/Documents/tvm/web/dist/wasm/webgpu_runtime.bc /Users/cfruan/Documents/mlc-llm/3rdparty/tokenizers-cpp/build/libtokenizers_cpp.a /Users/cfruan/Documents/mlc-llm/3rdparty/tokenizers-cpp/build/libtokenizers_c.a
 	@mkdir -p $(@D)
-	$(EMCC) $(EMCC_CFLAGS) -o dist/wasm/mlc_wasm_runtime.wasm $+ $(EMCC_LDFLAGS)
+	$(EMCC) $(EMCC_CFLAGS) -o dist/wasm/mlc_wasm_runtime.js $+ $(EMCC_LDFLAGS)
+
+dist/wasm/mlc_wasm_runtime.wasi.js: dist/wasm/mlc_wasm_runtime.wasm emcc/decorate_as_wasi.py
+	python3 emcc/decorate_as_wasi.py dist/wasm/mlc_wasm_runtime.js $@ cjs
+
+src/mlc_wasm_runtime_wasi.js: dist/wasm/mlc_wasm_runtime.wasm emcc/decorate_as_wasi.py
+	python3 emcc/decorate_as_wasi.py dist/wasm/mlc_wasm_runtime.js $@ es
 
 clean:
-	@rm -rf dist/wasm lib
+	@rm -rf dist/wasm lib src/mlc_wasm_runtime_wasi.js
 
 -include dist/wasm/*.d

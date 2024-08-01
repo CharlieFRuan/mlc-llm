@@ -28,11 +28,168 @@
 #define TVM_LOG_CUSTOMIZE 1
 
 // Pass in COMPILE_MLC_WASM_RUNTIME so unsupported code would not be compiled in to the .bc file
-#define COMPILE_MLC_WASM_RUNTIME 1
+// #define COMPILE_MLC_WASM_RUNTIME 1
 #define __STDC_FORMAT_MACROS 1
 #define PICOJSON_USE_INT64
 
 #define DMLC_USE_LOGGING_LIBRARY <tvm/runtime/logging.h>
+
+#include <tvm/runtime/c_runtime_api.h>
+#include <tvm/runtime/logging.h>
+
+#include "src/runtime/c_runtime_api.cc"
+#include "src/runtime/container.cc"
+#include "src/runtime/contrib/sort/sort.cc"
+#include "src/runtime/cpu_device_api.cc"
+#include "src/runtime/file_utils.cc"
+#include "src/runtime/library_module.cc"
+#include "src/runtime/logging.cc"
+#include "src/runtime/module.cc"
+#include "src/runtime/ndarray.cc"
+#include "src/runtime/object.cc"
+#include "src/runtime/profiling.cc"
+#include "src/runtime/registry.cc"
+#include "src/runtime/rpc/rpc_channel.cc"
+#include "src/runtime/rpc/rpc_endpoint.cc"
+#include "src/runtime/rpc/rpc_event_impl.cc"
+#include "src/runtime/rpc/rpc_local_session.cc"
+#include "src/runtime/rpc/rpc_module.cc"
+#include "src/runtime/rpc/rpc_session.cc"
+#include "src/runtime/system_library.cc"
+#include "src/runtime/workspace_pool.cc"
+// relax setup
+#include "src/runtime/memory/memory_manager.cc"
+#include "src/runtime/nvtx.cc"
+#include "src/runtime/relax_vm/builtin.cc"
+#include "src/runtime/relax_vm/bytecode.cc"
+#include "src/runtime/relax_vm/executable.cc"
+#include "src/runtime/relax_vm/kv_state.cc"
+#include "src/runtime/relax_vm/lm_support.cc"
+#include "src/runtime/relax_vm/ndarray_cache_support.cc"
+#include "src/runtime/relax_vm/paged_kv_cache.cc"
+#include "src/runtime/relax_vm/rnn_state.cc"
+#include "src/runtime/relax_vm/vm.cc"
+
+// --- Implementations of backend and wasm runtime API. ---
+
+int TVMBackendParallelLaunch(FTVMParallelLambda flambda, void* cdata, int num_task) {
+  TVMParallelGroupEnv env;
+  env.num_task = 1;
+  flambda(0, &env, cdata);
+  return 0;
+}
+
+int TVMBackendParallelBarrier(int task_id, TVMParallelGroupEnv* penv) { return 0; }
+
+// int TVMBackendParallelBarrier(int task_id, TVMParallelGroupEnv* penv) { return 0; }
+
+// int TVMBackendParallelBarrier(int task_id, TVMParallelGroupEnv* penv) { return 0; }
+
+// --- Environment PackedFuncs for testing ---
+namespace tvm {
+namespace runtime {
+namespace detail {
+// Override logging mechanism
+[[noreturn]] void LogFatalImpl(const std::string& file, int lineno, const std::string& message) {
+  std::cerr << "[FATAL] " << file << ":" << lineno << ": " << message << std::endl;
+  abort();
+}
+
+void LogMessageImpl(const std::string& file, int lineno, int level, const std::string& message) {
+  static const char* level_strings_[] = {
+      "[DEBUG] ",
+      "[INFO] ",
+      "[WARNING] ",
+      "[ERROR] ",
+  };
+  std::cout << level_strings_[level] << file << ":" << lineno << ": " << message << std::endl;
+}
+
+}  // namespace detail
+
+// namespace threading {
+//   void ResetThreadPool() { LOG(FATAL) << "NOT IMPLEMENTED"; }
+
+//   int32_t NumThreads() { LOG(FATAL) << "NOT IMPLEMENTED"; }
+// }
+
+TVM_REGISTER_GLOBAL("testing.echo").set_body([](TVMArgs args, TVMRetValue* ret) {
+  *ret = args[0];
+});
+
+TVM_REGISTER_GLOBAL("testing.call").set_body([](TVMArgs args, TVMRetValue* ret) {
+  (args[0].operator PackedFunc())
+      .CallPacked(TVMArgs(args.values + 1, args.type_codes + 1, args.num_args - 1), ret);
+});
+
+TVM_REGISTER_GLOBAL("testing.ret_string").set_body([](TVMArgs args, TVMRetValue* ret) {
+  *ret = args[0].operator String();
+});
+
+TVM_REGISTER_GLOBAL("testing.log_info_str").set_body([](TVMArgs args, TVMRetValue* ret) {
+  LOG(INFO) << args[0].operator String();
+});
+
+TVM_REGISTER_GLOBAL("testing.log_fatal_str").set_body([](TVMArgs args, TVMRetValue* ret) {
+  LOG(FATAL) << args[0].operator String();
+});
+
+TVM_REGISTER_GLOBAL("testing.add_one").set_body_typed([](int x) { return x + 1; });
+
+TVM_REGISTER_GLOBAL("testing.wrap_callback").set_body([](TVMArgs args, TVMRetValue* ret) {
+  PackedFunc pf = args[0];
+  *ret = runtime::TypedPackedFunc<void()>([pf]() { pf(); });
+});
+
+// internal function used for debug and testing purposes
+TVM_REGISTER_GLOBAL("testing.object_use_count").set_body([](TVMArgs args, TVMRetValue* ret) {
+  runtime::ObjectRef obj = args[0];
+  // substract the current one because we always copy
+  // and get another value.
+  *ret = (obj.use_count() - 1);
+});
+
+void ArrayDecodeStorage(NDArray cpu_arr, std::string bytes, std::string format, std::string dtype) {
+  if (format == "f32-to-bf16" && dtype == "float32") {
+    std::vector<uint16_t> buffer(bytes.length() / 2);
+    std::memcpy(buffer.data(), bytes.data(), buffer.size() * 2);
+    // decode bf16 to f32
+    const uint16_t* bf16 = reinterpret_cast<const uint16_t*>(buffer.data());
+    uint32_t* data = static_cast<uint32_t*>(cpu_arr->data);
+    ICHECK(cpu_arr.IsContiguous());
+    size_t size = 1;
+    for (int i = 0; i < cpu_arr->ndim; ++i) {
+      size *= cpu_arr->shape[i];
+    }
+    ICHECK_EQ(size, bytes.length() / 2);
+    for (size_t i = 0; i < size; ++i) {
+      data[i] = static_cast<uint32_t>(bf16[i]) << 16;
+    }
+  } else {
+    cpu_arr.CopyFromBytes(bytes.data(), bytes.length());
+  }
+}
+
+TVM_REGISTER_GLOBAL("tvmjs.array.decode_storage").set_body_typed(ArrayDecodeStorage);
+
+// Concatenate n TVMArrays
+TVM_REGISTER_GLOBAL("tvmjs.runtime.ArrayConcat").set_body([](TVMArgs args, TVMRetValue* ret) {
+  std::vector<ObjectRef> data;
+  for (int i = 0; i < args.size(); ++i) {
+    // Get i-th TVMArray
+    ICHECK_EQ(args[i].type_code(), kTVMObjectHandle);
+    Object* ptr = static_cast<Object*>(args[i].value().v_handle);
+    ICHECK(ptr->IsInstance<ArrayNode>());
+    auto* arr_i = static_cast<const ArrayNode*>(ptr);
+    for (size_t j = 0; j < arr_i->size(); ++j) {
+      // Push back each j-th element of the i-th array
+      data.push_back(arr_i->at(j));
+    }
+  }
+  *ret = Array<ObjectRef>(data);
+});
+}  // namespace runtime
+}  // namespace tvm
 
 // Grammar related
 #include "grammar/grammar.cc"
@@ -45,3 +202,43 @@
 
 // Only compiles necessary functions for mlc.PostProcessTokenTable
 #include "tokenizers/tokenizers.cc"
+
+// JSONFFIEngine
+// #include "json_ffi/json_ffi_engine.cc"
+// #include "json_ffi/conv_template.cc"
+// #include "json_ffi/image_utils.cc"
+// #include "json_ffi/openai_api_protocol.cc"
+// #include "metadata/model.cc"
+// #include "serve/engine_actions/action_commons.cc"
+// #include "serve/engine_actions/action.cc"
+// #include "serve/engine_actions/batch_decode.cc"
+// // #include "serve/engine_actions/batch_draft.cc"
+// #include "serve/engine_actions/batch_jumpforward.cc"
+// // #include "serve/engine_actions/batch_prefill_base.cc"
+// // #include "serve/engine_actions/batch_verify.cc"
+// #include "serve/engine_actions/new_request_prefill.cc"
+// // #include "serve/engine_actions/eagle_batch_draft.cc"
+// // #include "serve/engine_actions/eagle_batch_verify.cc"
+// // #include "serve/engine_actions/eagle_new_request_prefill.cc"
+
+// #include "serve/sampler/cpu_sampler.cc"
+// // #include "serve/sampler/gpu_sampler.cc"
+
+// #include "serve/config.cc"
+// #include "serve/data.cc"
+// #include "serve/draft_token_workspace_manager.cc"
+// #include "serve/engine_state.cc"
+// #include "serve/engine.cc"
+// #include "serve/event_trace_recorder.cc"
+// #include "serve/function_table.cc"
+// #include "serve/logit_processor.cc"
+// #include "serve/metrics.cc"
+// #include "serve/model.cc"
+// #include "serve/prefix_cache.cc"
+// #include "serve/radix_tree.cc"
+// #include "serve/request_state.cc"
+// #include "serve/request.cc"
+// #include "serve/threaded_engine.cc"
+// #include "tokenizers/streamer.cc"
+
+// // #include "serve/engine.cc"

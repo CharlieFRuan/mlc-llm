@@ -137,6 +137,10 @@ int32_t TokenizerObj::TokenToId(const std::string& token) const {
 }
 
 Tokenizer Tokenizer::FromPath(const String& _path, std::optional<TokenizerInfo> info) {
+  TokenizerInfo tokInfo = TokenizerInfo(make_object<TokenizerInfoNode>());
+  LOG(INFO) << "GOT TOKINFO";
+  LOG(INFO) << "GOT TOK";
+  return Tokenizer(tokenizers::Tokenizer::FromBlobJSON(_path), tokInfo);
   TokenizerInfo info_value = info.value_or(DetectTokenizerInfo(_path));
   std::filesystem::path path(_path.operator std::string());
   std::filesystem::path sentencepiece;
