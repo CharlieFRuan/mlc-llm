@@ -202,7 +202,7 @@ ObjectRef FunctionTable::LoadParams(const std::string& model_path, Device device
 
 void FunctionTable::_InitFunctions() {
   this->embed_func_ = mod_get_func("embed");
-  this->image_embed_func_ = mod_get_func("image_embed");
+  // this->image_embed_func_ = mod_get_func("image_embed");
   this->single_batch_prefill_func_ = mod_get_func("prefill");
   this->single_batch_decode_func_ = mod_get_func("decode");
   this->prefill_func_ = mod_get_func("batch_prefill");
@@ -222,6 +222,7 @@ void FunctionTable::_InitFunctions() {
   this->apply_logit_bias_func_ = mod->GetFunction("apply_logit_bias_inplace", true);
   this->apply_penalty_func_ = mod->GetFunction("apply_penalty_inplace", true);
   this->apply_bitmask_func_ = mod->GetFunction("apply_bitmask_inplace", true);
+  this->image_embed_func_ = mod->GetFunction("image_embed", true);
   this->alloc_embedding_tensor_func_ = mod_get_func("alloc_embedding_tensor");
   this->create_kv_cache_func_ = mod_get_func("create_flashinfer_paged_kv_cache");
   if (!this->create_kv_cache_func_.defined()) {

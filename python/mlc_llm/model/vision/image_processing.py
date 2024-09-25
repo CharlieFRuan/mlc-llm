@@ -183,7 +183,8 @@ class ImageProcessor(Module):
         )
         return out
 
-    def pad(self, image: Tensor, dtype="uint8"):
+    def pad(self, image: Tensor, dtype="uint32"):
+        # def pad(self, image: Tensor, dtype="uint8"):
         def create_pad_func(l, r, fill=255):
             @T.prim_func
             def pad_func(image: T.handle, out: T.handle, t: T.int64(), b: T.int64()):

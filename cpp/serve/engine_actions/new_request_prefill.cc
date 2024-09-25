@@ -66,12 +66,14 @@ class NewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
       int cum_prefill_length = 0;
       bool single_input =
           num_rsentries == 1 && prefill_inputs[0].rsentry->mstates[model_id]->inputs.size() == 1;
+      LOG(INFO) << "single_input: " << single_input;
       std::vector<int64_t> cached_token_data;
       for (int i = 0; i < num_rsentries; ++i) {
         const RequestStateEntry& rsentry = prefill_inputs[i].rsentry;
         RequestModelState mstate = rsentry->mstates[model_id];
         auto [input_data, input_length] =
             ChunkPrefillInputData(mstate, prefill_inputs[i].max_prefill_length);
+        LOG(INFO) << "input_length: " << input_length;
         if (prefill_lengths[i] == -1) {
           prefill_lengths[i] = input_length;
         } else {
@@ -101,36 +103,52 @@ class NewRequestPrefillActionObj : public BatchPrefillBaseActionObj {
         request_internal_ids.push_back(mstate->internal_id);
         RECORD_EVENT(trace_recorder_, rsentry->request->id, "start embedding");
         for (int j = 0; j < static_cast<int>(input_data.size()); ++j) {
+          LOG(INFO) << "CHARLIE 1";
           if (!model_id && !prefill_inputs[i].is_decode) {
+            LOG(INFO) << "CHARLIE 2";
             mstate->prefilled_inputs.push_back(input_data[j]);
           }
           if (const auto* token_data = input_data[j].as<TokenDataNode>()) {
+            // token data node, simply insert token into cached_token_data
+            LOG(INFO) << "CHARLIE 3";
             cached_token_data.insert(cached_token_data.end(), token_data->token_ids.begin(),
                                      token_data->token_ids.end());
           } else {
+            // image data node
+            LOG(INFO) << "CHARLIE 4";
             if (!cached_token_data.empty()) {
+              // If has previous token (e.g. text data), we embed it, getting (seq_len_token, hidden_size)
+              // save it to embeddings
+              LOG(INFO) << "CHARLIE 5";
               embeddings = TokenData(cached_token_data)
                                ->GetEmbedding(models_[model_id],
                                               /*dst=*/!single_input ? &embeddings : nullptr,
                                               /*offset=*/cum_prefill_length);
               cum_prefill_length += cached_token_data.size();
               cached_token_data.clear();
+              LOG(INFO) << "cum_prefill_length: " << cum_prefill_length;
             }
+            // then embed this image data, 
+            LOG(INFO) << "CHARLIE 6";
             embeddings = input_data[j]->GetEmbedding(models_[model_id],
                                                      /*dst=*/!single_input ? &embeddings : nullptr,
                                                      /*offset=*/cum_prefill_length);
             cum_prefill_length += input_data[j]->GetLength();
+            LOG(INFO) << "cum_prefill_length: " << cum_prefill_length;
           }
         }
         RECORD_EVENT(trace_recorder_, rsentry->request->id, "finish embedding");
       }
       if (!cached_token_data.empty()) {
+        // If the last entry is token data, we still need to embed that, so we embed and append to embeddings
+        LOG(INFO) << "CHARLIE 7";
         embeddings = TokenData(cached_token_data)
                          ->GetEmbedding(models_[model_id],
                                         /*dst=*/!single_input ? &embeddings : nullptr,
                                         /*offset=*/cum_prefill_length);
         cum_prefill_length += cached_token_data.size();
         cached_token_data.clear();
+        LOG(INFO) << "cum_prefill_length: " << cum_prefill_length;
       }
 
       RECORD_EVENT(trace_recorder_, request_ids, "start prefill");

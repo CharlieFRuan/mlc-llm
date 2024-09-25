@@ -114,6 +114,7 @@ class ImageData(Data):
             image_embed_size = 1921
         image_tensor = np.expand_dims(image_tensor, axis=0)  # HWC -> NHWC
         image_features = tvm.nd.array(image_tensor)
+        # image_features = tvm.nd.array(image_tensor, device=tvm.device("metal:0"))
         image_data = ImageData(image_features, image_embed_size)
         return image_data
 

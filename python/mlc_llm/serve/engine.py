@@ -1359,6 +1359,7 @@ class AsyncMLCEngine(engine_base.MLCEngineBase):
         # Create the request with the given id, input data, generation
         # config and the created callback.
         input_data = engine_utils.convert_prompts_to_data(prompt)
+        print(f"input_data: {input_data}")
         request = self._ffi["create_request"](
             request_id, input_data, generation_config.model_dump_json(by_alias=True)
         )
@@ -1886,6 +1887,7 @@ class MLCEngine(engine_base.MLCEngineBase):
         # Create the request with the given id, input data, generation
         # config and the created callback.
         input_data = engine_utils.convert_prompts_to_data(prompt)
+        print(f"input_data: {input_data}")
         request = self._ffi["create_request"](
             request_id, input_data, generation_config.model_dump_json(by_alias=True)
         )

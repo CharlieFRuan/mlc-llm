@@ -278,6 +278,7 @@ class DebugChat:  # pylint: disable=too-many-instance-attributes, too-few-public
     ) -> List[Union[List[int], data.ImageData]]:
         print("======================= Starts Tokenization & Embedding =======================")
         # Step 0. Generate prompt string using conversation template
+        self.conversation.system_message = "Dummy system prompt"
         if image_url is None:
             self.conversation.messages.append(("user", prompt))
         else:
@@ -286,6 +287,7 @@ class DebugChat:  # pylint: disable=too-many-instance-attributes, too-few-public
                     "user",
                     [
                         {"type": "image_url", "image_url": image_url},
+                        # {"type": "image_url", "image_url": image_url},
                         {"type": "text", "text": prompt},
                     ],
                 )

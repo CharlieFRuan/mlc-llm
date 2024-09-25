@@ -12,6 +12,7 @@ def get_max_num_threads_per_block(target: Target) -> int:
     max_threads_per_block = target.attrs.get("max_threads_per_block", None)
     if max_threads_per_block is None:
         return max_num_threads
+    print(f"get_max_num_threads_per_block: {max(max_num_threads, max_threads_per_block)}")
     return max(max_num_threads, max_threads_per_block)
 
 

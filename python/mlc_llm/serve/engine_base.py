@@ -748,9 +748,11 @@ def process_chat_completion_request(  # pylint: disable=too-many-arguments
     # - Get the prompt from template, and encode to token ids.
     # - Check prompt length
     engine_state.record_event(request_id, event="start tokenization")
+    print(f"conv_template.messages: {conv_template.messages}")
     prompts = engine_utils.process_prompts(  # type: ignore
         conv_template.as_prompt(model_config), f_tokenize
     )
+    print(f"prompts: {prompts}")
     engine_state.record_event(request_id, event="finish tokenization")
 
     if conv_template.system_prefix_token_ids is not None:

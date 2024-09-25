@@ -112,9 +112,15 @@ class ModelImpl : public ModelObj {
 
   ObjectRef ImageEmbed(const NDArray& image, ObjectRef* dst, int offset) final {
     NVTXScopedRange nvtx_scope("ImageEmbed");
+    LOG(INFO) << "CHARLIE IMAGE EMBED";
+    LOG(INFO) << "image.Shape(): " << image.Shape();
     CHECK(ft_.image_embed_func_.defined()) << "`image_embed` function is not found in the model. ";
-    auto image_dref_or_nd = ft_.CopyToWorker0(image, "image", image.Shape());
-    ObjectRef embeddings = ft_.image_embed_func_(image_dref_or_nd, params_);
+    // auto image_dref_or_nd = ft_.CopyToWorker0(
+    //     image, "image", {prefill_chunk_size_, hidden_size_});  // TODO: THIS SHOULD BE THE ISSUE
+    // ObjectRef embeddings = ft_.image_embed_func_(image_dref_or_nd, params_);
+    ObjectRef embeddings = ft_.image_embed_func_(image, params_);
+    TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+    LOG(INFO) << Downcast<NDArray>(embeddings).Shape();
     if (dst != nullptr) {
       CHECK(dst->defined());
       ft_.nd_copy_embedding_to_offset_func_(embeddings, *dst, offset);
@@ -242,6 +248,7 @@ class ModelImpl : public ModelObj {
     if (!embeddings->IsInstance<DRefObj>()) {
       // embeddings: (1, n, h)
       NDArray embeddings_nd = Downcast<NDArray>(embeddings);
+      LOG(INFO) << "embeddings_nd.Shape(): " << Downcast<NDArray>(embeddings).Shape();
       ICHECK_NE(hidden_size_, -1);
       ICHECK_EQ(embeddings_nd->ndim, 2);
       ICHECK_GE(embeddings_nd->shape[0], total_length);
@@ -250,6 +257,8 @@ class ModelImpl : public ModelObj {
       ICHECK_EQ(embeddings_nd->device.device_id, device_.device_id);
       embeddings_dref_or_nd =
           embeddings_nd.CreateView({1, total_length, hidden_size_}, embeddings_nd->dtype);
+      LOG(INFO) << "embeddings_dref_or_nd.Shape(): "
+                << Downcast<NDArray>(embeddings_dref_or_nd).Shape();
     } else {
       ShapeTuple embedding_shape{1, total_length, hidden_size_};
       embeddings_dref_or_nd = ft_.nd_view_func_(embeddings, embedding_shape);

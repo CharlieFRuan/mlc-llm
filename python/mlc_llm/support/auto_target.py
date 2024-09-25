@@ -265,12 +265,16 @@ def _build_webgpu():
         if not bc_path:
             raise RuntimeError(error_info)
 
-        relax.build(
+        ex = relax.build(
             mod,
             target=args.target,
             pipeline=pipeline,
             system_lib=True,
-        ).export_library(
+        )
+        source = ex.mod.imported_modules[0].imported_modules[0].get_source()
+        with open("./kernel.wgsl", "w", encoding="utf-8") as outfile:
+            outfile.write(source)
+        ex.export_library(
             str(output),
             libs=[bc_path],
         )
